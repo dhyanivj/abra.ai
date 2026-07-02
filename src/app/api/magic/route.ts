@@ -1,37 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import * as fs from "fs/promises";
-import * as path from "path";
-import * as os from "os";
+
+export const maxDuration = 300; // 5 minutes for long AI processing
 
 export async function POST(req: NextRequest) {
-  let ai: GoogleGenAI;
-  
-  if (process.env.GEMINI_API_KEY) {
-    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    ai = new GoogleGenAI({
-      googleAuthOptions: {
-        scopes: [
-          "https://www.googleapis.com/auth/cloud-platform",
-          "https://www.googleapis.com/auth/generative-language"
-        ]
-      }
-    });
-  } else {
+  const project = process.env.GOOGLE_CLOUD_PROJECT;
+  // Gemini Omni interactions API requires location = "global"
+  const location = process.env.GOOGLE_CLOUD_LOCATION || "global";
+
+  if (!project) {
     return NextResponse.json(
-      { error: "Neither GEMINI_API_KEY nor GOOGLE_APPLICATION_CREDENTIALS environment variables are configured." },
+      { error: "GOOGLE_CLOUD_PROJECT environment variable is not set." },
       { status: 500 }
     );
   }
 
-  let tempFilePath: string | null = null;
-  let geminiFileName: string | null = null;
+  // Vertex AI (Gemini Enterprise Agent Platform) mode.
+  // GOOGLE_APPLICATION_CREDENTIALS is auto-picked up by google-auth-library.
+  const ai = new GoogleGenAI({
+    vertexai: true,
+    project,
+    location,
+  });
 
   try {
     const formData = await req.formData();
-    const videoFile = formData.get("video") as File;
-    const prompt = formData.get("prompt") as string;
+    const videoFile = formData.get("video") as File | null;
+    const prompt = formData.get("prompt") as string | null;
 
     if (!videoFile) {
       return NextResponse.json({ error: "Missing video file" }, { status: 400 });
@@ -40,104 +35,78 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing magic prompt" }, { status: 400 });
     }
 
-    // Convert file to buffer and write to temp file
+    // Convert to base64 — Vertex AI Enterprise doesn't support files.upload(),
+    // so we inline the video directly in the interactions input.
     const buffer = Buffer.from(await videoFile.arrayBuffer());
-    const tempDir = os.tmpdir();
-    tempFilePath = path.join(tempDir, `magic-${Date.now()}-${videoFile.name || "video.webm"}`);
-    await fs.writeFile(tempFilePath, buffer);
+    const base64Video = buffer.toString("base64");
+    const mimeType = (videoFile.type || "video/webm").split(";")[0] as
+      | "video/webm"
+      | "video/mp4";
 
-    console.log("Uploading file to Gemini File API:", tempFilePath);
-    let uploadedFile = await ai.files.upload({
-      file: tempFilePath,
-      config: {
-        mimeType: videoFile.type || "video/webm",
-        displayName: videoFile.name || "setup-video.webm",
-      },
-    });
+    console.log(
+      `[abra.ai] Calling gemini-omni-flash-preview. Video: ${(buffer.length / 1024).toFixed(1)} KB, mime: ${mimeType}, location: ${location}`
+    );
 
-    if (!uploadedFile.name) {
-      throw new Error("No name returned from uploaded file.");
-    }
-    geminiFileName = uploadedFile.name;
-    console.log("Uploaded Gemini file name:", geminiFileName);
-
-    // Poll until file is ACTIVE
-    let fileState = uploadedFile.state;
-    let attempts = 0;
-    const maxAttempts = 30; // 60 seconds max
-
-    while (fileState !== "ACTIVE" && attempts < maxAttempts) {
-      if (fileState === "FAILED") {
-        throw new Error("Gemini file processing failed.");
-      }
-      console.log(`Polling Gemini file status... (attempt ${attempts + 1}, current state: ${fileState})`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      uploadedFile = await ai.files.get({ name: geminiFileName });
-      fileState = uploadedFile.state;
-      attempts++;
-    }
-
-    if (fileState !== "ACTIVE") {
-      throw new Error("Timeout waiting for Gemini file to become ACTIVE.");
-    }
-
-    console.log("Gemini file is ACTIVE. Creating interaction...");
-
-    // Call interactions API
+    // Interactions API: video-in → video-out
     const interaction = await ai.interactions.create({
       model: "gemini-omni-flash-preview",
+      stream: false,
+      response_modalities: ["video"],
       input: [
         { type: "text", text: prompt },
-        { 
-          type: "video", 
-          uri: uploadedFile.uri, 
-          mime_type: (uploadedFile.mimeType || "video/webm").split(";")[0] as any
-        }
-      ]
+        {
+          type: "video",
+          data: base64Video,
+          mime_type: mimeType,
+        },
+      ],
     });
 
-    console.log("Interaction response received. Checking for video output...");
+    console.log(`[abra.ai] Interaction status: ${(interaction as any).status}`);
+    console.log(`[abra.ai] output_video present: ${!!interaction.output_video}`);
 
-    if (!interaction.output_video || !interaction.output_video.data) {
-      if (interaction.output_text) {
-        throw new Error(`Model returned text instead of video: ${interaction.output_text}`);
+    // Primary path: SDK extracts output_video from steps automatically
+    let videoBase64 = interaction.output_video?.data;
+
+    // Fallback: manually walk steps to find the video content block
+    if (!videoBase64) {
+      const steps = (interaction as any).steps as Array<{
+        type: string;
+        content?: Array<{ type: string; data?: string; mime_type?: string }>;
+      }> | undefined;
+
+      if (steps) {
+        for (const step of steps) {
+          if (step.type === "model_output" && step.content) {
+            for (const block of step.content) {
+              if (block.type === "video" && block.data) {
+                videoBase64 = block.data;
+                console.log("[abra.ai] Found video in steps fallback.");
+                break;
+              }
+            }
+          }
+          if (videoBase64) break;
+        }
       }
-      throw new Error("Model failed to generate output video.");
     }
 
-    const outputVideoBase64 = interaction.output_video.data;
-    console.log("Magic video generated successfully!");
+    if (!videoBase64) {
+      const debugText = interaction.output_text
+        ? `Model returned text: "${interaction.output_text.slice(0, 300)}"`
+        : `No video output. Status: ${(interaction as any).status}. Keys: ${Object.keys(interaction).join(", ")}`;
+      console.error("[abra.ai] No video:", debugText);
+      throw new Error(debugText);
+    }
 
-    return NextResponse.json({
-      success: true,
-      video: outputVideoBase64,
-    });
-
-  } catch (error: any) {
-    console.error("Error during Magic generation:", error);
+    console.log(`[abra.ai] Success! Video base64 length: ${videoBase64.length}`);
+    return NextResponse.json({ success: true, video: videoBase64 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[abra.ai] Error:", message);
     return NextResponse.json(
-      { error: error.message || "An unexpected error occurred during processing." },
+      { error: message || "An unexpected error occurred." },
       { status: 500 }
     );
-  } finally {
-    // Cleanup local temp file
-    if (tempFilePath) {
-      try {
-        await fs.unlink(tempFilePath);
-        console.log("Cleaned up local temp file:", tempFilePath);
-      } catch (err) {
-        console.error("Failed to clean up local temp file:", err);
-      }
-    }
-
-    // Cleanup Gemini file
-    if (geminiFileName) {
-      try {
-        await ai.files.delete({ name: geminiFileName });
-        console.log("Cleaned up Gemini file:", geminiFileName);
-      } catch (err) {
-        console.error("Failed to clean up Gemini file:", err);
-      }
-    }
   }
 }

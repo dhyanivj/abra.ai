@@ -153,7 +153,7 @@ const PRESETS = [
   },
 ] as const;
 
-type RecordingState = 'idle' | 'countdown' | 'recording' | 'processing' | 'result';
+type RecordingState = 'idle' | 'countdown' | 'recording' | 'preview' | 'processing' | 'result';
 
 /* ─── Smoke Text Effect ─── */
 const HEADING = 'abra.ai';
@@ -229,6 +229,7 @@ export default function Home() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordedBlobRef = useRef<Blob | null>(null);
 
   const [isDark, setIsDark] = useState(true);
 
@@ -365,9 +366,11 @@ export default function Home() {
 
     rec.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: rec.mimeType });
+      recordedBlobRef.current = blob;
       setRawUrl(URL.createObjectURL(blob));
       stopCamera();
-      processMagic(blob);
+      // Go to preview — let the user decide to Proceed or Retake
+      setState('preview');
     };
 
     rec.start();
@@ -410,7 +413,20 @@ export default function Home() {
     }
   };
 
+  const handleProceed = () => {
+    if (!recordedBlobRef.current) return;
+    processMagic(recordedBlobRef.current);
+  };
+
+  const handleRetake = () => {
+    recordedBlobRef.current = null;
+    setRawUrl(null);
+    setState('idle');
+    startCamera();
+  };
+
   const reset = () => {
+    recordedBlobRef.current = null;
     setRawUrl(null);
     setMagicUrl(null);
     setState('idle');
@@ -557,11 +573,51 @@ export default function Home() {
               <div className={`${showAllEffects ? 'lg:col-span-4' : 'lg:col-span-7'} ${card} transition-all duration-500`}>
                 <h2 className={`mb-5 flex items-center gap-2 text-sm font-medium transition-colors ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
                   <Video size={16} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
-                  Camera
+                  {state === 'preview' ? 'Preview' : 'Camera'}
                 </h2>
 
                 <div className={`relative aspect-video w-full overflow-hidden rounded-xl border transition-all duration-300 ${isDark ? 'border-zinc-850 bg-black' : 'border-zinc-200 bg-zinc-50'}`}>
-                  {!cameraOn ? (
+                  {(state === 'preview' || state === 'processing') && rawUrl ? (
+                    /* ─ Preview / Processing: show recorded clip ─ */
+                    <>
+                      <video
+                        src={rawUrl}
+                        autoPlay={state === 'preview'}
+                        loop={state === 'preview'}
+                        muted={state === 'processing'}
+                        className="h-full w-full object-cover"
+                      />
+                      {/* Preview badge */}
+                      {state === 'preview' && (
+                        <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full border border-zinc-700/40 bg-black/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
+                          Preview
+                        </div>
+                      )}
+                      {/* Processing overlay */}
+                      {state === 'processing' && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/85"
+                        >
+                          <div className="relative h-10 w-10">
+                            <div className="absolute inset-0 rounded-full border-2 border-zinc-800" />
+                            <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-zinc-300" />
+                          </div>
+                          <div className="h-0.5 w-40 overflow-hidden rounded-full bg-zinc-800">
+                            <motion.div
+                              className="h-full bg-zinc-400"
+                              initial={{ width: '0%' }}
+                              animate={{ width: '100%' }}
+                              transition={{ duration: 30, ease: 'linear' }}
+                            />
+                          </div>
+                          <p className="text-xs font-medium text-zinc-300">{status}</p>
+                        </motion.div>
+                      )}
+                    </>
+                  ) : !cameraOn ? (
                     /* ─ Empty state ─ */
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
                       <div className={`rounded-full border p-4 transition-colors ${isDark ? 'border-zinc-800 bg-zinc-900' : 'border-zinc-200 bg-zinc-100'}`}>
@@ -635,40 +691,53 @@ export default function Home() {
                         </motion.div>
                       )}
 
-                      {/* Processing */}
-                      {state === 'processing' && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/90"
-                        >
-                          {/* Spinner */}
-                          <div className="relative h-10 w-10">
-                            <div className="absolute inset-0 rounded-full border-2 border-zinc-800" />
-                            <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-zinc-300" />
-                          </div>
 
-                          {/* Progress bar */}
-                          <div className="h-0.5 w-40 overflow-hidden rounded-full bg-zinc-800">
-                            <motion.div
-                              className="h-full bg-zinc-400"
-                              initial={{ width: '0%' }}
-                              animate={{ width: '100%' }}
-                              transition={{ duration: 30, ease: 'linear' }}
-                            />
-                          </div>
-
-                          <div className="text-center">
-                            <p className="text-xs font-medium text-zinc-300">{status}</p>
-                          </div>
-                        </motion.div>
-                      )}
                     </>
                   )}
                 </div>
 
-                {/* Action button */}
+                {/* Action buttons */}
                 <div className="mt-5">
+                  {/* Preview state: Proceed + Retake */}
+                  <AnimatePresence mode="wait">
+                    {state === 'preview' && (
+                      <motion.div
+                        key="preview-actions"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.25 }}
+                        className="flex gap-3"
+                      >
+                        <motion.button
+                          whileHover={{ y: -1 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={handleProceed}
+                          className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold shadow-sm transition-colors ${
+                            isDark ? 'bg-white text-black hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                          }`}
+                        >
+                          <Sparkles size={14} />
+                          Proceed
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ y: -1 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={handleRetake}
+                          className={`flex items-center justify-center gap-2 rounded-xl border px-5 py-3 text-sm font-semibold transition-all duration-200 ${
+                            isDark
+                              ? 'border-zinc-700 text-zinc-300 hover:bg-zinc-900 hover:text-white'
+                              : 'border-zinc-200 text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 shadow-sm'
+                          }`}
+                        >
+                          <RefreshCw size={14} />
+                          Retake
+                        </motion.button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Idle: Record Gesture */}
                   {cameraOn && state === 'idle' && (
                     <motion.button
                       whileHover={{ y: -1 }}
@@ -695,6 +764,14 @@ export default function Home() {
                       isDark ? 'border-zinc-800 bg-zinc-900/60 text-zinc-600' : 'border-zinc-200 bg-zinc-100/60 text-zinc-500'
                     }`}>
                       Get ready…
+                    </div>
+                  )}
+                  {state === 'processing' && (
+                    <div className={`flex w-full items-center justify-center gap-2 rounded-xl border py-3 text-sm transition-colors ${
+                      isDark ? 'border-zinc-800 bg-zinc-900/60 text-zinc-500' : 'border-zinc-200 bg-zinc-100/60 text-zinc-600'
+                    }`}>
+                      <div className="h-3 w-3 animate-spin rounded-full border border-transparent border-t-zinc-500" />
+                      Generating magic…
                     </div>
                   )}
                 </div>
