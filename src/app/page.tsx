@@ -270,22 +270,25 @@ export default function Home() {
     });
   };
 
-  /* ─── Status rotation ─── */
+  /* ─── Keyframe extraction ref ─── */
+  const keyframeBase64Ref = useRef<string | null>(null);
+
+  /* ─── Status rotation for Veo 3.1 ─── */
   useEffect(() => {
     if (state !== 'processing') return;
     const msgs = [
-      'Uploading video…',
-      'Analyzing gesture…',
-      'Generating effects…',
-      'Rendering output…',
-      'Almost there…',
+      'Uploading gesture frame to Veo 3.1...',
+      'Initializing Veo 3.1 model (us-central1)...',
+      'Synthesizing realistic video physics & lighting...',
+      'Rendering 6-second high-definition output...',
+      'Finalizing magic output...',
     ];
     let i = 0;
     setStatus(msgs[0]);
     const id = setInterval(() => {
       i = (i + 1) % msgs.length;
       setStatus(msgs[i]);
-    }, 3000);
+    }, 4000);
     return () => clearInterval(id);
   }, [state]);
 
@@ -326,6 +329,34 @@ export default function Home() {
     setCameraOn(false);
   };
 
+  /* ─── Keyframe Extraction ─── */
+  const extractKeyframeFromVideo = (videoBlob: Blob) => {
+    try {
+      const url = URL.createObjectURL(videoBlob);
+      const tempVideo = document.createElement('video');
+      tempVideo.src = url;
+      tempVideo.muted = true;
+      tempVideo.playsInline = true;
+      tempVideo.onloadeddata = () => {
+        tempVideo.currentTime = 0.5;
+      };
+      tempVideo.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = tempVideo.videoWidth || 1280;
+        canvas.height = tempVideo.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          keyframeBase64Ref.current = dataUrl;
+        }
+        URL.revokeObjectURL(url);
+      };
+    } catch (e) {
+      console.warn('Failed to extract keyframe snapshot:', e);
+    }
+  };
+
   /* ─── Recording flow ─── */
   const beginCountdown = () => {
     if (!streamRef.current) return;
@@ -347,6 +378,23 @@ export default function Home() {
     setState('recording');
     setRecSeconds(5);
     chunksRef.current = [];
+    keyframeBase64Ref.current = null;
+
+    // Grab instant frame snapshot from current video element if playing
+    if (videoRef.current) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth || 1280;
+        canvas.height = videoRef.current.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          keyframeBase64Ref.current = canvas.toDataURL('image/jpeg', 0.92);
+        }
+      } catch (err) {
+        console.warn('Instant canvas capture warning:', err);
+      }
+    }
 
     const mime = ['video/webm;codecs=vp9', 'video/webm', 'video/mp4'].find((m) =>
       MediaRecorder.isTypeSupported(m),
@@ -368,6 +416,9 @@ export default function Home() {
       const blob = new Blob(chunksRef.current, { type: rec.mimeType });
       recordedBlobRef.current = blob;
       setRawUrl(URL.createObjectURL(blob));
+      if (!keyframeBase64Ref.current) {
+        extractKeyframeFromVideo(blob);
+      }
       stopCamera();
       // Go to preview — let the user decide to Proceed or Retake
       setState('preview');
@@ -392,8 +443,11 @@ export default function Home() {
     setError(null);
 
     const fd = new FormData();
-    fd.append('video', blob, 'setup.webm');
+    fd.append('video', blob, 'gesture.webm');
     fd.append('prompt', prompt());
+    if (keyframeBase64Ref.current) {
+      fd.append('image_base64', keyframeBase64Ref.current);
+    }
 
     try {
       const res = await fetch('/api/magic', { method: 'POST', body: fd });
