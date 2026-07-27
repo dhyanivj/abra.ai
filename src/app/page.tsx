@@ -273,22 +273,23 @@ export default function Home() {
   /* ─── Keyframe extraction ref ─── */
   const keyframeBase64Ref = useRef<string | null>(null);
 
-  /* ─── Status rotation for Veo 3.1 ─── */
+  /* ─── Status rotation ─── */
   useEffect(() => {
     if (state !== 'processing') return;
     const msgs = [
-      'Uploading gesture frame to Veo 3.1...',
-      'Initializing Veo 3.1 model (us-central1)...',
-      'Synthesizing realistic video physics & lighting...',
-      'Rendering 6-second high-definition output...',
-      'Finalizing magic output...',
+      'Capturing gesture energy…',
+      'Synthesizing mystical particles…',
+      'Weaving atmospheric lighting & reflections…',
+      'Manipulating motion physics…',
+      'Infusing high-definition enchantment…',
+      'Finalizing your spell…',
     ];
     let i = 0;
     setStatus(msgs[0]);
     const id = setInterval(() => {
       i = (i + 1) % msgs.length;
       setStatus(msgs[i]);
-    }, 4000);
+    }, 4500);
     return () => clearInterval(id);
   }, [state]);
 
@@ -424,7 +425,7 @@ export default function Home() {
       setState('preview');
     };
 
-    rec.start();
+    rec.start(200);
 
     let left = 5;
     const id = setInterval(() => {
@@ -432,7 +433,10 @@ export default function Home() {
       setRecSeconds(left);
       if (left <= 0) {
         clearInterval(id);
-        if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop();
+        if (recorderRef.current?.state === 'recording') {
+          recorderRef.current.requestData();
+          recorderRef.current.stop();
+        }
       }
     }, 1000);
   };
@@ -635,10 +639,13 @@ export default function Home() {
                     /* ─ Preview / Processing: show recorded clip ─ */
                     <>
                       <video
+                        key={rawUrl}
                         src={rawUrl}
-                        autoPlay={state === 'preview'}
-                        loop={state === 'preview'}
-                        muted={state === 'processing'}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        controls={state === 'preview'}
                         className="h-full w-full object-cover"
                       />
                       {/* Preview badge */}
@@ -653,21 +660,60 @@ export default function Home() {
                         <motion.div
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/85"
+                          className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/90 backdrop-blur-md px-6 text-center"
                         >
-                          <div className="relative h-10 w-10">
-                            <div className="absolute inset-0 rounded-full border-2 border-zinc-800" />
-                            <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-zinc-300" />
-                          </div>
-                          <div className="h-0.5 w-40 overflow-hidden rounded-full bg-zinc-800">
+                          {/* Magical Orb Ring */}
+                          <div className="relative flex items-center justify-center">
+                            {/* Ambient Glow */}
                             <motion.div
-                              className="h-full bg-zinc-400"
+                              animate={{ scale: [0.85, 1.15, 0.85], opacity: [0.2, 0.5, 0.2] }}
+                              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+                              className="absolute h-24 w-24 rounded-full bg-gradient-to-r from-zinc-600/20 via-zinc-400/20 to-zinc-700/20 blur-xl"
+                            />
+                            
+                            {/* Outer Spinning Gradient Ring */}
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
+                              className="h-16 w-16 rounded-full border-2 border-transparent border-t-zinc-200 border-r-zinc-500/60 p-1"
+                            />
+
+                            {/* Inner Pulsing Core */}
+                            <div className="absolute flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/90 border border-zinc-700/60 shadow-lg">
+                              <motion.div
+                                animate={{ scale: [0.9, 1.1, 0.9], opacity: [0.7, 1, 0.7] }}
+                                transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                              >
+                                <Sparkles size={18} className="text-zinc-200" />
+                              </motion.div>
+                            </div>
+                          </div>
+
+                          {/* Shimmering Progress Bar */}
+                          <div className="w-56 overflow-hidden rounded-full bg-zinc-850 p-0.5 border border-zinc-800 shadow-inner">
+                            <motion.div
+                              className="h-1.5 rounded-full bg-gradient-to-r from-zinc-600 via-zinc-200 to-zinc-500"
                               initial={{ width: '0%' }}
                               animate={{ width: '100%' }}
-                              transition={{ duration: 30, ease: 'linear' }}
+                              transition={{ duration: 40, ease: 'easeInOut' }}
                             />
                           </div>
-                          <p className="text-xs font-medium text-zinc-300">{status}</p>
+
+                          {/* Status text with smooth fade transition */}
+                          <div className="h-6 overflow-hidden flex items-center justify-center">
+                            <AnimatePresence mode="wait">
+                              <motion.p
+                                key={status}
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -6 }}
+                                transition={{ duration: 0.35 }}
+                                className="text-xs font-medium tracking-wide text-zinc-300"
+                              >
+                                {status}
+                              </motion.p>
+                            </AnimatePresence>
+                          </div>
                         </motion.div>
                       )}
                     </>
@@ -932,34 +978,22 @@ export default function Home() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.4 }}
-              className={`mx-auto max-w-4xl ${card} p-8`}
+              className={`mx-auto max-w-3xl ${card} p-8`}
             >
-              <h2 className={`mb-6 flex items-center gap-2 text-sm font-medium transition-colors ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                <Sparkles size={16} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
-                Result
-              </h2>
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className={`flex items-center gap-2 text-sm font-medium transition-colors ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                  <Sparkles size={16} className={isDark ? 'text-zinc-400' : 'text-zinc-500'} />
+                  Generated Magic Video
+                </h2>
+                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-400">
+                  Veo 3.1 HD
+                </span>
+              </div>
 
-              <div className="grid gap-6 md:grid-cols-2">
-                <div>
-                  <p className={`mb-2 text-[10px] font-semibold uppercase tracking-widest transition-colors ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
-                    Original
-                  </p>
-                  <div className={`aspect-video overflow-hidden rounded-xl border bg-black transition-colors ${isDark ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                    {rawUrl && (
-                      <video src={rawUrl} controls className="h-full w-full object-cover" />
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className={`mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest transition-colors ${isDark ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                    <Sparkles size={10} /> Generated
-                  </p>
-                  <div className={`aspect-video overflow-hidden rounded-xl border shadow-sm transition-colors ${isDark ? 'border-zinc-700 bg-black' : 'border-zinc-200 bg-zinc-50'}`}>
-                    {magicUrl && (
-                      <video src={magicUrl} controls autoPlay loop className="h-full w-full object-cover" />
-                    )}
-                  </div>
-                </div>
+              <div className={`aspect-video overflow-hidden rounded-2xl border shadow-xl transition-colors ${isDark ? 'border-zinc-700/60 bg-black' : 'border-zinc-200 bg-zinc-50'}`}>
+                {magicUrl && (
+                  <video src={magicUrl} controls autoPlay loop className="h-full w-full object-cover" />
+                )}
               </div>
 
               <div className="mt-8 flex justify-end gap-3">

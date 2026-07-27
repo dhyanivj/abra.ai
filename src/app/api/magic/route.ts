@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const prompt = formData.get("prompt") as string | null;
-    const videoFile = formData.get("video") as File | null;
+    const quality = (formData.get("quality") as string) || "fast";
     const imageFile = formData.get("image") as File | null;
     const imageBase64Param = formData.get("image_base64") as string | null;
 
@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
       ...(imageInput ? { image: imageInput } : {}),
       config: {
         durationSeconds: 6,
+        resolution: "720p",
         aspectRatio: "16:9",
         personGeneration: "allow_adult",
         enhancePrompt: true,
